@@ -326,6 +326,27 @@ func TestWindowOptions(t *testing.T) {
 	}
 }
 
+// A window whose arithmetic lands on 0, 0 is placed there, not centered:
+// Position asks for an exact place, as the zero X and Y alone cannot.
+func TestWindowOptionsPosition(t *testing.T) {
+	_, fw := testWindow(t, WindowOptions{Position: &Point{X: 0, Y: 0}})
+	if fw.Opts.Center || fw.Opts.X != 0 || fw.Opts.Y != 0 {
+		t.Errorf("position at the corner: %+v", fw.Opts)
+	}
+	_, fw = testWindow(t, WindowOptions{Position: &Point{X: 40, Y: 30}})
+	if fw.Opts.Center || fw.Opts.X != 40 || fw.Opts.Y != 30 {
+		t.Errorf("position elsewhere: %+v", fw.Opts)
+	}
+	_, fw = testWindow(t, WindowOptions{})
+	if !fw.Opts.Center {
+		t.Errorf("the zero options still center: %+v", fw.Opts)
+	}
+	_, fw = testWindow(t, WindowOptions{X: 5})
+	if fw.Opts.Center || fw.Opts.X != 5 {
+		t.Errorf("one of X and Y places the window: %+v", fw.Opts)
+	}
+}
+
 func TestConsumeActivationClickOption(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		_, fw := testWindow(t, WindowOptions{ConsumeActivationClick: enabled})
