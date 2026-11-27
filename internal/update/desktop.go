@@ -32,7 +32,12 @@ func RefreshDesktopEntry(dir, name string) error {
 	entryPath := filepath.Join(data, "applications", name+".desktop")
 	registered, err := os.ReadFile(entryPath)
 	if err != nil {
-		return nil
+		// One that is not there was never registered; one that cannot be
+		// read is a failure, as an unreadable MIME package is below.
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
 	// The directory as the entry has it, which may go through a link, such
 	// as /home to /var/home.
@@ -70,8 +75,14 @@ func RefreshDesktopEntry(dir, name string) error {
 		}
 	case err != nil && !errors.Is(err, fs.ErrNotExist):
 		return err
-	default:
+	case oldErr == nil:
+		// Neither side has a MIME package; nothing to do.
 		return nil
+	default:
+		// The version defines no file types, and the user's MIME package
+		// cannot be read: it cannot be told whether it still matches, so
+		// the read is said, as an unreadable package of the version is.
+		return oldErr
 	}
 	runTool("update-mime-database", filepath.Join(data, "mime"))
 	return nil

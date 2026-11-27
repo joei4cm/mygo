@@ -100,3 +100,53 @@ func TestRefreshDesktopEntry(t *testing.T) {
 		t.Error("the MIME package of a version without file types stayed")
 	}
 }
+
+// An entry that cannot be read is not one that was never registered: the
+// refresh is said as failing, not skipped, so the stale entry does not go
+// unnoticed.
+func TestRefreshDesktopEntrySaysAnUnreadableEntry(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	entryPath := filepath.Join(data, "applications", "my-app.desktop")
+	if err := os.MkdirAll(entryPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := RefreshDesktopEntry(t.TempDir(), "my-app"); err == nil {
+		t.Fatal("an unreadable entry was skipped")
+	}
+}
+
+// A MIME package that cannot be read cannot be told whether it still
+// matches the version's, so the read is said as failing, not left silent
+// with a stale one.
+func TestRefreshDesktopEntrySaysAnUnreadableMIME(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", data)
+	dir := filepath.Join(t.TempDir(), "my-app.app")
+	entry := "[Desktop Entry]\nExec=my-app\n"
+	entryPath := filepath.Join(data, "applications", "my-app.desktop")
+	mimePath := filepath.Join(data, "mime", "packages")
+	for path, content := range map[string]string{
+		filepath.Join(dir, "my-app"):         "",
+		filepath.Join(dir, "my-app.desktop"): entry,
+		entryPath:                            desktopEntry(entry, dir, "my-app"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The version defines no file types (no my-app.xml in dir); the user's
+	// old package cannot be read at all, being a folder under the name.
+	if err := os.MkdirAll(mimePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(mimePath, "my-app.xml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := RefreshDesktopEntry(dir, "my-app"); err == nil {
+		t.Fatal("an unreadable MIME package was left with no word")
+	}
+}
