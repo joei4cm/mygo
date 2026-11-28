@@ -77,9 +77,9 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 	if rt.insp.pointer(rt, ev, x, y) {
 		return true
 	}
-	if ev.Touch && touchInput != nil {
+	if touch := touchFuncs.Load(); ev.Touch && touch != nil {
 		x, y = rt.aimTouch(ev.Kind, x, y)
-		if touchInput(rt, ev, x, y) {
+		if touch.input(rt, ev, x, y) {
 			return false
 		}
 	}
@@ -147,6 +147,9 @@ func (rt *engine) event(ev platform.SurfaceEvent) (taken bool) {
 		rt.modsChanged(Modifiers(ev.Mods))
 		rt.holdKey(Modifiers(ev.Mods), Key(ev.Key), Key(ev.PhysicalKey))
 		taken = rt.keyDownPhysical(Modifiers(ev.Mods), Key(ev.Key), Key(ev.PhysicalKey), KeyCode(ev.Code), ev.Repeat)
+		if ev.Handled != nil {
+			*ev.Handled = rt.keyHandled
+		}
 	case platform.ModifiersChanged:
 		rt.modsChanged(Modifiers(ev.Mods))
 	case platform.RawKeyPressed, platform.RawKeyReleased:
@@ -637,6 +640,15 @@ func (rt *engine) pointerDown(x, y float32, button int, mods Modifiers, clicks i
 		h.drag.reset(rt.now(), x, y)
 		return
 	}
+	if button == 0 && clicks == 1 && target != nil && target.passClick {
+		// The first click on an EditableText outside a list goes where it
+		// would on a Text, to a card around it that takes clicks; counted
+		// as the text's, the next press makes the text's double click.
+		// With nothing around that takes it, the text keeps its click.
+		if o := rt.interactiveAround(chain, target); o != nil {
+			target = o
+		}
+	}
 	if button == 1 && rt.menuPress(chain, x, y) {
 		return
 	}
@@ -743,6 +755,20 @@ func (rt *engine) pointerCancel(button int) {
 		return
 	}
 	rt.pointerUp(button, 0, true)
+}
+
+// interactiveAround returns the first interactive element of chain, from
+// the innermost out, around s, or nil.
+func (rt *engine) interactiveAround(chain []uint64, s *state) *state {
+	around := false
+	for _, id := range chain {
+		if id == s.id {
+			around = true
+		} else if o := rt.states[id]; around && o != nil && o.flags&interactive != 0 {
+			return o
+		}
+	}
+	return nil
 }
 
 // countPress counts the backend's n-th quick press from the first on the
@@ -1180,16 +1206,20 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, code KeyCod
 	} else if !repeat {
 		delete(rt.byPosition, physical)
 	}
+	rt.keyHandled = false
 	if rt.inspectKey(mods, key) {
+		rt.keyHandled = true
 		return true
 	}
 	rt.observeFocus(InputEvent{Kind: InputKeyDown, Key: key, PhysicalKey: physical, Code: code, Mods: mods, Repeat: repeat})
 	k := keyEvent{mods, key, repeat}
 	if key == KeyEscape && mods == 0 && rt.dragCancel() {
+		rt.keyHandled = true
 		return true
 	}
 	if h := rt.focusHandler(); h != nil && !rt.claimed(k) && rt.deliver(h, InputEvent{Kind: InputKeyDown, Key: key, PhysicalKey: physical, Code: code, Mods: mods, Repeat: repeat}) {
 		rt.blinkStart = rt.now()
+		rt.keyHandled = true
 		return true
 	}
 	if s := rt.states[rt.focused]; s != nil && s.editor != nil && s.editor.onTextKey != nil && s.flags&flagEditable != 0 &&
@@ -1198,12 +1228,14 @@ func (rt *engine) keyDownPhysical(mods Modifiers, key, physical Key, code KeyCod
 		// keys and text before it, which it reads.
 		rt.blinkStart = rt.now()
 		rt.requestFrame()
+		rt.keyHandled = true
 		return true
 	}
 	if (key == KeyContextMenu && mods == 0 || key == KeyF10 && mods == Shift) && !rt.claimed(k) && rt.menuKey() {
 		return false
 	}
-	if s := rt.states[rt.focused]; s != nil && s.editor != nil && s.flags&(flagEditable|flagSelectable) != 0 && s.editor.wants(k) &&
+	if s := rt.states[rt.focused]; s != nil && s.editor != nil && s.flags&(flagEditable|flagSelectable) != 0 &&
+		(s.editor.wants(k) || s.editor.takesUnclaimed(k) && !rt.claimed(k)) &&
 		!(k.mods == Cmd && k.key == KeyC && rt.copiesNothing(s)) {
 		if rt.textSelectionKey(s, k) {
 			rt.requestFrame()
@@ -1995,10 +2027,11 @@ func (e *node) FocusWithin() bool {
 // Focus gives the element the keyboard focus. Called in every frame, it
 // keeps it there; AutoFocus gives it once. A field around an input, as
 // SearchField's, gives it to its input, where typing goes. When the focus
-// moves to it, it scrolls the containers around it as little as shows it,
-// as Tab does and the web's focus() does; ScrollIntoView lines it up
-// otherwise. While a pointer button is held it scrolls nothing: what a
-// press focuses, as the line a grip moves, is under the pointer.
+// moves to it, it scrolls the containers around it as little as shows it
+// with room for its focus ring, as Tab does and the web's focus() does;
+// ScrollIntoView lines it up otherwise. While a pointer button is held it
+// scrolls nothing: what a press focuses, as the line a grip moves, is
+// under the pointer.
 //
 // Its options, as the web's focus() options, keep the scroll where the
 // user left it: the focus returned to a cell of a grid when a dialog

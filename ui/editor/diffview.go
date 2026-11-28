@@ -17,7 +17,8 @@ type DiffState struct {
 	// Old and New are the texts compared; empty buffers are made when
 	// nil. New is the one edited when Editable, and can be the buffer of
 	// an editor's too: an edit in either shows in both. An empty text has
-	// no lines, as of a file added or deleted: its side numbers none.
+	// no lines, as of a file added or deleted: its side shows and numbers
+	// none, unless Editable, where typing starts on the line it shows.
 	Old, New *Buffer
 	// Layout shows the texts side by side, or one over the other.
 	Layout DiffLayout
@@ -386,6 +387,9 @@ func (d *DiffState) ScrollY() float64 { return d.eds[1].scrollY }
 
 func (d *DiffState) SetScrollY(y float64) {
 	ed := d.editorOf(DiffNew)
+	// The position asked for stands, as State.SetScrollY's does, though
+	// the sides are there already or not laid out yet.
+	d.eds[0].reveal, d.eds[1].reveal = revealNone, revealNone
 	if d.Layout == DiffSplit && !d.FitContent {
 		// Both sides, which the frame keeps together (sharedScroll).
 		d.scroll.set(y)

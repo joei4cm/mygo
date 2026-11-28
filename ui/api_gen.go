@@ -1475,7 +1475,9 @@ func DropData(e Element, options transfer.DropOptions) (transfer.Drop, bool) {
 // file's name in Finder: a double click on it, or Enter while it has the
 // focus, shows a text input of it, with the text before its extension
 // selected. Enter keeps what was typed, as moving the focus away does, and
-// Escape goes back; Changed reports a new value.
+// Escape goes back; Changed reports a new value. A click on the text takes
+// the focus and goes on where it would on a Text, to a card around it that
+// takes clicks (Clicked), which chooses what the text names.
 //
 // In a List's or a Table's rows, the list keeps the focus and the text
 // takes none: Enter on macOS, and F2, edit the text of the row chosen,
@@ -5307,10 +5309,11 @@ func (_handle Element) FixedLineHeight(v float32) Element {
 // Focus gives the element the keyboard focus. Called in every frame, it
 // keeps it there; AutoFocus gives it once. A field around an input, as
 // SearchField's, gives it to its input, where typing goes. When the focus
-// moves to it, it scrolls the containers around it as little as shows it,
-// as Tab does and the web's focus() does; ScrollIntoView lines it up
-// otherwise. While a pointer button is held it scrolls nothing: what a
-// press focuses, as the line a grip moves, is under the pointer.
+// moves to it, it scrolls the containers around it as little as shows it
+// with room for its focus ring, as Tab does and the web's focus() does;
+// ScrollIntoView lines it up otherwise. While a pointer button is held it
+// scrolls nothing: what a press focuses, as the line a grip moves, is
+// under the pointer.
 //
 // Its options, as the web's focus() options, keep the scroll where the
 // user left it: the focus returned to a cell of a grid when a dialog
@@ -7660,7 +7663,9 @@ func (_handle Element) Row() Element {
 // RowDoubleClicked, as on the systems' own lists. Assistive technology
 // pressing the row, without the pointer, reports it to the first element
 // asking. In a list that does not choose its rows, asking makes the row
-// take the click.
+// take the click. Outside the rows of a List or a Table it reports
+// nothing, which a Tester makes a panic and an app logs once: Clicked is
+// the element's own click there.
 //
 //	ui.List(c, &app.files, len(app.names), func(i int) {
 //		if ui.Text(c, app.names[i]).Padding(6, 12).FillWidth().RowClicked() {
@@ -7697,7 +7702,9 @@ func (_handle Element) RowCount(n int) Element {
 // RowDoubleClicked reports, while a row of a List or a Table builds, that
 // the row was double-clicked since the last frame with the pointer over the
 // element: a cell sees its row's double click this way and leaves the click
-// to the row, which chooses, where DoubleClicked would take it.
+// to the row, which chooses, where DoubleClicked would take it. Outside
+// the rows of a List or a Table it reports nothing, which a Tester makes a
+// panic and an app logs once.
 //
 //	ui.Table(c, &app.list, cols, len(app.rows), func(row, col int) {
 //		cell := ui.Box(c).FillWidth().Children(func() { ui.Text(c, app.rows[row][col]) })
@@ -7811,9 +7818,10 @@ func (_handle Element) Scale(x float32, y float32) Element {
 
 // ScrollIntoView scrolls the containers around the element as little as
 // shows it, once the frame is laid out: an element added in this frame
-// comes into view with it. Call it in the frame it should come into view,
-// as when it is added or chosen: in every frame, it would keep the user
-// from scrolling it away.
+// comes into view with it, and one with the keyboard focus with room for
+// its focus ring. Call it in the frame it should come into view, as when
+// it is added or chosen: in every frame, it would keep the user from
+// scrolling it away.
 //
 // Its options line the element up elsewhere in the containers, or glide
 // there, as the web's scrollIntoView options do: the current match of a

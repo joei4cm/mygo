@@ -838,6 +838,24 @@ func TestSurfaceKey(hwnd uintptr, vk byte, mods ...byte) bool {
 	return true
 }
 
+// TestGeneralAutofill reports whether WebView2 saves and suggests what is
+// typed into a window's page. ok is false without a web view or a runtime
+// with ICoreWebView2Settings4.
+func TestGeneralAutofill(hwnd uintptr) (on, ok bool) {
+	w := theBackend.windows[hwnd]
+	if w == nil || w.settings == 0 {
+		return false, false
+	}
+	s4 := queryInterface(w.settings, &iidICoreWebView2Settings4)
+	if s4 == 0 {
+		return false, false
+	}
+	defer release(s4)
+	var v int32
+	comCall(s4, set4GetIsGeneralAutofillEnabled, uintptr(unsafe.Pointer(&v)))
+	return v != 0, true
+}
+
 // TestBrowserAcceleratorKeys reports whether WebView2's own keys (F5 and
 // Ctrl+R reloading, Ctrl+P printing, ...) work in a window's page; ok is
 // false without a web view or a runtime with ICoreWebView2Settings3.
@@ -1136,6 +1154,13 @@ func TestBackgroundThrottlingOff(hwnd uintptr, webView bool) (off bool, settings
 func TestThumbBarLive(hwnd uintptr) bool {
 	w := theBackend.windows[hwnd]
 	return w != nil && w.thumb.live
+}
+
+// TestBadgeShown reports whether the shell has the app's badge as the
+// overlay of the window's taskbar button. Call on the main thread.
+func TestBadgeShown(hwnd uintptr) bool {
+	w := theBackend.windows[hwnd]
+	return w != nil && w.badgeShown
 }
 
 // TestThumbButtonClicked posts the WM_COMMAND the shell sends when the

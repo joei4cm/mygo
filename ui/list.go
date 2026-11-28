@@ -131,6 +131,11 @@ type ListState struct {
 	// itself takes nothing and shows no place between the rows. Return nil
 	// for rows that do not drag. A list cannot both DragRows and Reorder.
 	DragRows func(rows []int) any
+	// DragLabel, with DragRows, names the rows dragged, as "report.pdf":
+	// while they are dragged within the window, the name follows the
+	// pointer in place of a copy of the row, which would cover the row
+	// they are dragged onto. Return "" for rows that keep the copy.
+	DragLabel func(rows []int) string
 	// DragSelect, with Selection, chooses rows as the pointer drags over
 	// them from the row it pressed: those from that row to the one under
 	// the pointer, as a Shift-click on it would, and with Cmd (Ctrl on
@@ -166,6 +171,15 @@ type ListState struct {
 	// cells in a color of their own, the rest of their rows in a lighter
 	// one, and every other row striped. Its zero value keeps the accent.
 	CellsStyle CellsStyle
+	// ChosenColor fills the rows chosen in place of the accent, and
+	// ChosenText colors what they hold in place of AccentText, as a quiet
+	// gray in a file tree beside an editor, where the accent would be
+	// loud: an Outline's arrows too. With ChosenColor and no ChosenText,
+	// the rows keep the theme's Text. ChosenColor stays in a window not
+	// drawn as active, where the accent fades (Theme.InactiveAccent). Zero
+	// colors keep the theme's; a Table choosing cells paints its rows with
+	// CellsStyle.
+	ChosenColor, ChosenText Color
 	// Sort, when set, is the column a Table's rows are sorted by: a click
 	// on the header of a Sortable column sorts by it, ascending, and
 	// another reverses the order, which the header shows. Sort the rows as
@@ -875,6 +889,9 @@ func (f *listFrame) build(i int) *node {
 			}
 		} else {
 			w.Selected(on)
+			if on {
+				s.chosenColors(w, t)
+			}
 		}
 		switch r := t.Radius; {
 		case f.flat && !s.RoundRows:
@@ -934,6 +951,20 @@ func (f *listFrame) buildLate(i int) *node {
 	return w
 }
 
+// chosenColors paints w, a row chosen, in ChosenColor and ChosenText where
+// they are set, over the accent Selected gave it.
+func (s *ListState) chosenColors(w *node, t *Theme) {
+	switch {
+	case s.ChosenText != Transparent:
+		w.TextColor(s.ChosenText)
+	case s.ChosenColor != Transparent:
+		w.TextColor(t.Text)
+	}
+	if s.ChosenColor != Transparent {
+		w.Background(s.ChosenColor)
+	}
+}
+
 func (f *listFrame) isHeader(i int) bool { return f.s.Header != nil && f.s.Header(i) }
 
 // cursor returns where the keys move the choice from, or nil when the list
@@ -969,7 +1000,11 @@ func (f *listFrame) dragValue(i int) any {
 	if f.s.DragRows != nil {
 		v = f.s.DragRows(rows)
 	}
-	return countedDrag{v, len(rows)}
+	label := ""
+	if f.s.DragRows != nil && v != nil && f.s.DragLabel != nil {
+		label = f.s.DragLabel(rows)
+	}
+	return countedDrag{value: v, n: len(rows), label: label}
 }
 
 // dragged returns the rows a drag from row i moves: those chosen when it

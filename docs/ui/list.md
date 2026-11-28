@@ -128,6 +128,17 @@ When the same list shows another set of rows, as another table's, start
 its state afresh (`app.list = ui.ListState{}`) so that it forgets the item
 chosen before and the place it scrolled to.
 
+Rows chosen show in the accent, with `AccentText` on it. `ChosenColor` fills
+them with a color of your own and `ChosenText` colors what they hold, as a
+quiet gray in a file tree beside an editor, where the accent would be loud;
+an [outline](outline.md)'s arrows take `ChosenText` too. With `ChosenColor`
+alone, the rows keep the theme's `Text`. `ChosenColor` stays in a window not
+drawn as active, where the accent fades.
+
+```go
+app.list.ChosenColor = ui.Hex("#3a3a3c")
+```
+
 Files to choose several of, by their paths:
 
 ```go
@@ -220,7 +231,11 @@ the choice report none, nor does a Shift- or Cmd-click extending it. A double
 click reports its first click with `RowClicked` and its second with
 `RowDoubleClicked`, as the systems' lists do. Assistive technology pressing
 the row reports it to the first element of the row asking, and in a list
-that does not choose its rows, asking makes the row take the click.
+that does not choose its rows, asking makes the row take the click. Outside
+the rows of a list or a table, no row takes a click for them to report:
+they report nothing there, which a `Tester` makes a panic where they were
+asked and an app logs once. `Clicked` and `DoubleClicked` are an element's
+own clicks there.
 
 ```go
 ui.List(c, &app.sidebar, len(app.pages), func(i int) {
@@ -360,6 +375,21 @@ if paths, ok := ui.Drop[[]string](row); ok {
 
 Return nil for rows that do not drag. A list cannot both `Reorder` and
 `DragRows`.
+
+A copy of the row follows the pointer, and covers the row it is over. With
+`DragLabel`, a label naming what is dragged follows below and to the right
+of the pointer instead, leaving the row it would drop on readable, as in a
+tree of folders. Several rows dragged show their number on its corner.
+Return "" for rows that keep the copy:
+
+```go
+app.files.DragLabel = func(rows []int) string {
+	return app.names[rows[0]] // the first of them, with the number on its corner
+}
+```
+
+The label shows while the rows are dragged within the window; a drag
+leaving it with `DragData` shows the system's drag image.
 
 See [drag and drop](drag-and-drop.md).
 

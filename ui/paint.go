@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 	"weak"
 
@@ -120,8 +121,8 @@ func (rt *engine) paint(root *node, w, h, scale float32) {
 	p.cull = !rt.inkStale && !rt.noCull
 	p.element(root)
 	p.cull = false
-	if touchPaint != nil {
-		touchPaint(rt, p)
+	if touch := touchFuncs.Load(); touch != nil {
+		touch.paint(rt, p)
 	}
 	if rt.insp.open {
 		rt.insp.paintHighlight(rt, p, h)
@@ -257,12 +258,19 @@ func (e *node) shadowMargin() float32 {
 // element may reach, and a DIP more, for its edge's antialiasing: 4 for
 // the theme's ring by default.
 func (e *node) ringMargin() float32 {
+	return max(4, e.ringReach()+1)
+}
+
+// ringReach returns how far beyond its box the focus ring of the element
+// reaches, with the offset it sets or the theme's: 3 for the theme's ring
+// by default, 0 for a ring inside its edge.
+func (e *node) ringReach() float32 {
 	t := e.c.window
 	off := t.FocusRingOffset
 	if e.ringSet&ringOffsetSet != 0 {
 		off = e.ringOffset
 	}
-	return max(4, off+t.focusRingWidth()+1)
+	return max(0, off+t.focusRingWidth())
 }
 
 // setInk sets e's ink from vis, its box in the window, once commit set
@@ -370,14 +378,15 @@ func (p *Painter) element(e *node) {
 	// flat when that shows the same, which painting tells (checkFlat).
 	var flat groupMark
 	grouped := false
-	if paintGroup != nil && e.first != nil && !e.effecting && e.fade() < 1 {
+	groups := groupFuncs.Load()
+	if groups != nil && e.first != nil && !e.effecting && e.fade() < 1 {
 		if p.opacity*e.fade() <= 0.001 {
 			// Faded out, as an Exit or a pose's Fade ends: nothing shows,
 			// and its layer drawn at an opacity of 0 would show whole, as
 			// an op's 0 means 1.
 			return
 		}
-		if flat, grouped = paintGroup(p, e); !grouped {
+		if flat, grouped = groups.paint(p, e); !grouped {
 			return
 		}
 	} else if e.st.effectLayer != nil && !e.effecting {
@@ -499,7 +508,11 @@ func (p *Painter) element(e *node) {
 		p.pushClip(inner, rad)
 	}
 	if !clips || p.clip.W > 0 && p.clip.H > 0 {
-		zOrder := e.zOrder && e != e.c.overlay && zPaint != nil
+		var zo *zOrdering
+		if e.zOrder && e != e.c.overlay {
+			zo = zByZ.Load()
+		}
+		zOrder := zo != nil
 		if e.ghosts && !zOrder {
 			// Elements leaving go under their siblings; by z-index, under
 			// those of the same one (paintByZ).
@@ -510,7 +523,7 @@ func (p *Painter) element(e *node) {
 			}
 		}
 		if zOrder {
-			zPaint(p, e)
+			zo.paint(p, e)
 		} else {
 			// Elements flying go over their layer: the window's content, under
 			// its overlays, or their overlay, under those after it.
@@ -571,7 +584,7 @@ func (p *Painter) element(e *node) {
 	}
 	p.opacity = saved
 	if grouped {
-		checkFlat(p, e, flat)
+		groups.flat(p, e, flat)
 	}
 	p.opaque, p.under = savedOpaque, p.under[:under]
 }
@@ -1081,21 +1094,21 @@ func (p *Painter) textForeground(l *text.Layout, x, y float32, color Color, ts t
 	// Inline transforms do not change while the text paints; look for them once.
 	moves := p.inlineTransforms()
 	clips := !p.transform.Set && !moves
-	if paintShadows != nil && (ts.shadow.color.A > 0 || sp != nil && sp.shadows()) {
+	if shadow := textShadowFuncs.Load(); shadow != nil && (ts.shadow.color.A > 0 || sp != nil && sp.shadows()) {
 		var spans spanPaint
 		if sp != nil {
 			spans = *sp
 		}
-		paintShadows(p, l, x, y, color, ts, spans, moves, clips)
+		shadow.paint(p, l, x, y, color, ts, spans, moves, clips)
 	}
-	if paintStrokes != nil && (ts.strokeWidth > 0 && ts.strokeColor.A > 0 || sp != nil && sp.strokes()) {
+	if stroke := textStrokeFuncs.Load(); stroke != nil && (ts.strokeWidth > 0 && ts.strokeColor.A > 0 || sp != nil && sp.strokes()) {
 		// The spans by value, as a call through a variable would move a
 		// pointer to the caller's to the heap.
 		var spans spanPaint
 		if sp != nil {
 			spans = *sp
 		}
-		paintStrokes(p, l, x, y, color, ts, spans, moves, clips)
+		stroke.paint(p, l, x, y, color, ts, spans, moves, clips)
 	}
 	// Rasterized at the size the transform shows them at, if it scales
 	// them; else at the painter's scale, clips then applying to pen.
@@ -1163,18 +1176,25 @@ func (p *Painter) textForeground(l *text.Layout, x, y float32, color Color, ts t
 	}
 }
 
-// paintStrokes is textStrokes, and strokeGlyph the text system's
-// StrokeGlyph, once TextStroke is called, so that apps that never stroke
-// text do not link them.
+// textStrokeLinks publishes the paint and glyph lookup used for strokes.
+type textStrokeLinks struct {
+	paint func(p *Painter, l *text.Layout, x, y float32, color Color, ts textStyle, sp spanPaint, moves, clips bool)
+	glyph func(s *text.System, f *text.Font, id uint32, scale, x float32, shade text.Shade, opaque bool, width float32) text.GlyphImage
+}
+
 var (
-	paintStrokes func(p *Painter, l *text.Layout, x, y float32, color Color, ts textStyle, sp spanPaint, moves, clips bool)
-	strokeGlyph  func(s *text.System, f *text.Font, id uint32, scale, x float32, shade text.Shade, opaque bool, width float32) text.GlyphImage
+	textStrokeOnce  sync.Once
+	textStrokeFuncs atomic.Pointer[textStrokeLinks]
 )
 
+// linkStrokes publishes the text stroke functions once. TextStroke calls it,
+// so apps that never stroke text do not link the painter or glyph function.
 func linkStrokes() {
-	if paintStrokes == nil {
-		paintStrokes, strokeGlyph = (*Painter).textStrokes, (*text.System).StrokeGlyph
-	}
+	textStrokeOnce.Do(func() {
+		textStrokeFuncs.Store(&textStrokeLinks{
+			paint: (*Painter).textStrokes, glyph: (*text.System).StrokeGlyph,
+		})
+	})
 }
 
 // textStrokes paints the strokes of the glyphs of l, laid out from (x, y),
@@ -1188,6 +1208,7 @@ func (p *Painter) textStrokes(l *text.Layout, x, y float32, color Color, ts text
 		sp = &spans
 	}
 	sys := p.rt.text
+	strokeGlyph := textStrokeFuncs.Load().glyph
 	gs := p.glyphSpace(l, x, y, moves)
 	s := gs.scale
 	shade := text.ShadeOf(color.R, color.G, color.B)
@@ -1233,18 +1254,26 @@ func (p *Painter) textStrokes(l *text.Layout, x, y float32, color Color, ts text
 	}
 }
 
-// paintShadows is textShadows, and shadowGlyph the text system's
-// ShadowGlyph, once a TextShadow is made (NewTextShadow), so that apps
-// whose text casts none do not link them.
+// textShadowLinks publishes the paint and glyph lookup used for shadows.
+type textShadowLinks struct {
+	paint func(p *Painter, l *text.Layout, x, y float32, color Color, ts textStyle, sp spanPaint, moves, clips bool)
+	glyph func(s *text.System, f *text.Font, id uint32, scale, x float32, shade text.Shade, opaque bool, sigma float32) text.GlyphImage
+}
+
 var (
-	paintShadows func(p *Painter, l *text.Layout, x, y float32, color Color, ts textStyle, sp spanPaint, moves, clips bool)
-	shadowGlyph  func(s *text.System, f *text.Font, id uint32, scale, x float32, shade text.Shade, opaque bool, sigma float32) text.GlyphImage
+	textShadowOnce  sync.Once
+	textShadowFuncs atomic.Pointer[textShadowLinks]
 )
 
+// linkTextShadows publishes the text shadow functions once. NewTextShadow
+// calls it, so apps whose text casts no shadow do not link the painter or
+// glyph function.
 func linkTextShadows() {
-	if paintShadows == nil {
-		paintShadows, shadowGlyph = (*Painter).textShadows, (*text.System).ShadowGlyph
-	}
+	textShadowOnce.Do(func() {
+		textShadowFuncs.Store(&textShadowLinks{
+			paint: (*Painter).textShadows, glyph: (*text.System).ShadowGlyph,
+		})
+	})
 }
 
 // textShadows paints the shadows the glyphs of l, laid out from (x, y),
@@ -1258,6 +1287,7 @@ func (p *Painter) textShadows(l *text.Layout, x, y float32, color Color, ts text
 		sp = &spans
 	}
 	sys := p.rt.text
+	shadowGlyph := textShadowFuncs.Load().glyph
 	gs := p.glyphSpace(l, x, y, moves)
 	s := gs.scale
 	shade := text.ShadeOf(color.R, color.G, color.B)
@@ -1592,10 +1622,11 @@ func (p *Painter) scrollbars(e *node) {
 	if !st.barsShown {
 		// A finger shows a thin thumb on no track for a moment as it moves
 		// the content, and it fades: no press takes it.
-		if touchBars == nil {
+		touch := touchFuncs.Load()
+		if touch == nil {
 			return
 		}
-		fade = touchBars(st, rt)
+		fade = touch.bars(st, rt)
 		if hide || fade <= 0 {
 			return
 		}

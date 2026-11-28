@@ -350,6 +350,9 @@ type engine struct {
 	dirOverride uint8
 	dupKeys     map[uint64]bool
 	lateKeys    map[uint64]bool
+	// outsideRows are the elements that asked RowClicked or
+	// RowDoubleClicked outside a row, reported once each.
+	outsideRows map[uint64]bool
 	warnings    []string
 	// strict makes mistakes found while building panic, as duplicate keys
 	// do in a Tester.
@@ -462,6 +465,9 @@ type engine struct {
 	toastPass    int
 	// mods are the modifiers of the last pointer event.
 	mods Modifiers
+	// keyHandled tells that the last key down went to a handler, which
+	// acted on it, rather than to the text input keeping it to type.
+	keyHandled bool
 
 	consumed bool
 	// animating is set as a frame builds when something moves, for another
@@ -799,8 +805,8 @@ func (rt *engine) runFrame() {
 	rt.repaintRate, rt.repaintFull, rt.untracked = 0, false, false
 	rt.routeKeys()
 	rt.glideWheels(now)
-	if touchFrame != nil {
-		touchFrame(rt, now)
+	if touch := touchFuncs.Load(); touch != nil {
+		touch.frame(rt, now)
 	}
 	rt.glideSnaps(now)
 	if d := rt.drag; d != nil {
@@ -923,13 +929,13 @@ func (rt *engine) runFrame() {
 	}
 	rt.stats.lap(phaseBuild)
 	rt.insp.lap(0)
-	if insetRoot != nil {
-		insetRoot(rt, root)
+	if touch := touchFuncs.Load(); touch != nil {
+		touch.insetRoot(rt, root)
 	}
 	layoutTree(root, appW, rt.insp.contentHeight(w, h))
 	rt.measureFit(root)
-	if extendScrolls != nil {
-		extendScrolls(rt, root, h)
+	if touch := touchFuncs.Load(); touch != nil {
+		touch.extendScrolls(rt, root, h)
 	}
 	if checkBuilt != nil {
 		checkBuilt(rt, builtLaidOut)
@@ -1758,8 +1764,8 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 	var base scene.Affine
 	if e.parent != nil && e != e.c.overlay {
 		base = e.parent.world
-		if contentStretch != nil && e.parent.scrolls() {
-			base = contentStretch(base, e.parent)
+		if touch := touchFuncs.Load(); touch != nil && e.parent.scrolls() {
+			base = touch.contentStretch(base, e.parent)
 		}
 		e.world = base.Mul(e.world)
 	}
@@ -1805,6 +1811,7 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 	}
 	s.ignoreInput = e.ignoreInput || e.parent != nil && e.parent.st.ignoreInput
 	s.handleDoubleClick = e.handleDoubleClick
+	s.passClick = e.passClick
 	s.accessHidden = e.accessHidden || e.flags&flagInert != 0 || e.parent != nil && e.parent.st.accessHidden
 	s.accessDisabled = e.accessDisabled || e.parent != nil && e.parent.st.accessDisabled
 	s.activeDescendant = e.activeDescendant.id
@@ -1953,8 +1960,12 @@ func (rt *engine) commitElement(e *node, clip Rect, hidden bool) {
 	// Sticky ones are in the flow for the focus, and paint among the
 	// absolute ones, where their hits go.
 	// A child with a z-index moves its hits to where it paints.
-	if e.zOrder && e != e.c.overlay && zCommit != nil {
-		zCommit(rt, e, clip, invisible)
+	var zo *zOrdering
+	if e.zOrder && e != e.c.overlay {
+		zo = zByZ.Load()
+	}
+	if zo != nil {
+		zo.commit(rt, e, clip, invisible)
 	} else {
 		var stuckBuf [4][2]int
 		stuck := stuckBuf[:0]

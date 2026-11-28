@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"slices"
+	"sync"
 	"testing"
 	"weak"
 
@@ -143,4 +144,95 @@ func TestTesterTextSystemUnreachable(t *testing.T) {
 		})
 	})
 	runtime.KeepAlive(next)
+}
+
+// TestParallelTestersZIndex runs Testers raising elements with ZIndex on
+// different goroutines, and fails under go test -race while ZIndex writes
+// the package's functions that order children by z-index each time it is
+// called (issue #2432).
+func TestParallelTestersZIndex(t *testing.T) {
+	for i := range 4 {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			t.Parallel()
+			var hits []int
+			tt := NewTester(func(c *Context) {
+				Box(c).Size(60, 60).Children(func() {
+					for k := range 2 {
+						// The first is raised above the second, built after it.
+						e := ButtonBase(c).Size(40, 40).Absolute().Top(0).Left(0).ZIndex((1 - k) * (i + 1))
+						if e.Clicked() {
+							hits = append(hits, k)
+						}
+					}
+				})
+			}, 60, 60)
+			for range 10 {
+				tt.Frame()
+			}
+			tt.ClickAt(20, 20)
+			if !slices.Equal(hits, []int{0}) {
+				t.Errorf("the click goes to %v, want the raised button 0", hits)
+			}
+		})
+	}
+}
+
+// TestEnableTouchAcrossTesters runs touch linking and frame reads on
+// different goroutines, and fails under go test -race while enableTouch
+// wrote the package's touch functions on every SetInsets and FingerDown
+// call, which every Tester's frames read at once.
+func TestEnableTouchAcrossTesters(t *testing.T) {
+	writer := NewTester(func(c *Context) {
+		Column(c).Children(func() { Text(c, "touch writer") })
+	}, 100, 100)
+	reader := NewTester(func(c *Context) {
+		Column(c).Children(func() { Text(c, "frame reader") })
+	}, 100, 100)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 500 {
+			writer.SetInsets(1, 1, 1, 1)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 500 {
+			reader.Frame()
+		}
+	}()
+	close(start)
+	wg.Wait()
+}
+
+// TestTextDecorationLinksAcrossTesters runs text painting while another
+// Tester first links text strokes and shadows, the links shared by every
+// Painter and read on every text draw.
+func TestTextDecorationLinksAcrossTesters(t *testing.T) {
+	reader := NewTester(func(c *Context) { Text(c, "concurrent paint") }, 120, 80)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 1000 {
+			reader.Frame()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 8 {
+			NewTester(func(c *Context) {
+				Text(c, "stroke and shadow").TextStroke(1, Color{A: 255}).TextShadow(0, 1, 1, Color{A: 255})
+			}, 120, 80)
+		}
+	}()
+	close(start)
+	wg.Wait()
 }

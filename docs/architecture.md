@@ -2173,7 +2173,11 @@ as in Tauri:
   `windowStates.cleared`, after which windows capture nothing for the rest
   of the run, so the quit's saves (as windows close, and in `finish`
   before `OnQuit`) cannot bring the states back. A saved window that would not show on any
-  display keeps its size and is centered. On Windows, where a window's
+  display keeps its size and is centered; one that would is fitted to the
+  work area of the display with the most of it (`platform.FitWindow`, as
+  AppKit constrains frames): no larger, its top edge inside, so that the
+  title bar is not under the menu bar when that display is smaller than
+  the one it was saved on. On Windows, where a window's
   position in DIPs changes with the displays' scales (`dipSpace`), and
   earlier versions' could not tell displays of different scales apart,
   the state also keeps the window's
@@ -7444,7 +7448,7 @@ which npm allows only for packages that exist: the first release uses an
 | file icons | `NSWorkspace iconForFile:` drawn into an sRGB `NSBitmapImageRep` at the size | GIO's `standard::icon`, or a desktop entry's `GAppInfo` icon, through `gtk_icon_theme_lookup_by_gicon` | `IShellItemImageFactory::GetImage` (`SIIGBF_ICONONLY`), a DIB with straight alpha |
 | icons of file types (`TypeIcon`) | `UTType typeWithFilenameExtension:` → `NSWorkspace iconForContentType:` (`iconForFileType:` before macOS 11), drawn as file icons | `g_content_type_guess` of a name with the extension → `g_content_type_get_icon`, through the icon theme | the image factory of a simple ID list (`SHSimpleIDListFromPath`), which needs no file, as file icons |
 | installed apps | `.app` bundles of the Applications folders, `NSFileManager displayNameAtPath:` and `NSBundle`, off the main thread; launched with `openURL:` | `g_app_info_get_all` filtered by `g_app_info_should_show`; launched with `g_app_info_launch` and GDK's launch context | `FOLDERID_AppsFolder` enumerated in an STA of its own; launched with `ShellExecute` of `shell:AppsFolder\<ID>` |
-| badge count | Dock tile label | Unity launcher API count | not shown |
+| badge count | Dock tile label | Unity launcher API count | each window's button's overlay icon (`ITaskbarList3::SetOverlayIcon`, again on `TaskbarButtonCreated` and `WM_DPICHANGED`): the text, a count past 99 as 99+, in white semibold Segoe UI on a red disc drawn with GDI, a small icon at the window's DPI; the whole text is its description |
 | skip taskbar | ignored | skip-taskbar hint | `ITaskbarList::DeleteTab` (the window style is untouched) |
 | FlashFrame | informational Dock bounce | urgency hint | `FlashWindowEx` until focused |
 | visible on all workspaces | `NSWindowCollectionBehaviorCanJoinAllSpaces` | `gtk_window_stick` | ignored |
@@ -7474,6 +7478,7 @@ which npm allows only for packages that exist: the first release uses an
 | swipes and pinches (`SwipeNavigation`, `PinchZoom`) | `allowsBackForwardNavigationGestures` and `allowsMagnification` of the `WKWebView`, both off unless asked for | `WebKitSettings:enable-back-forward-navigation-gestures`; WebKitGTK has no setting for pinches, so the web view's `GtkGestureZoom`, which it keeps in its data as `wk-view-zoom-gesture` (2.38+), is given `GTK_PHASE_NONE` unless `PinchZoom`: it then sees neither a touchpad's pinch nor a touchscreen's | `ICoreWebView2Settings6`'s `IsSwipeNavigationEnabled` and `ICoreWebView2Settings5`'s `IsPinchZoomEnabled`, both on in WebView2 and put to the options' values in `setUp`, before the first navigation |
 | the user's zoom (`ZoomControl`) | none in `WKWebView` | none in WebKitGTK | `ICoreWebView2Settings`'s `IsZoomControlEnabled` (Ctrl+wheel, and Ctrl+Plus and Ctrl+Minus with the browser's keys), on in WebView2 and put to the option's value in `setUp`; the controller's `ZoomFactorChanged` keeps `zoom` (on ARM64 the CSS zoom over the controller's, `userZoom`) and calls `WindowHandler.ZoomChanged` when it is not `SetZoom`'s |
 | the browser's keys (reload, print, find, zoom) | none | none | WebView2's (F5, Ctrl+R, Ctrl+P, Ctrl+F, Ctrl+Plus, ...) only with the inspector (`ICoreWebView2Settings3`'s `AreBrowserAcceleratorKeysEnabled`); `AcceleratorKeyPressed` still gives the menus every key |
+| a page's form history | none | none | `ICoreWebView2Settings4`'s `IsGeneralAutofillEnabled` off in `setUp`, before the first navigation; the value is the profile's, so every web view of a session shares it; a runtime without Settings4 (before 1.0.902.49) keeps WebView2's own, which is on. Password autosave stays at WebView2's default, off |
 | file associations | `CFBundleDocumentTypes`; files arrive with `application:openURLs:` | desktop entry `MimeType` (`%U`), a shared-mime-info package in the .deb and .rpm for types the app defines (`x-`) | ProgIDs and `OpenWithProgids` written by the installer |
 | document windows | `representedURL` (proxy icon, Command-click folder menu) and `setDocumentEdited:` (the dot), then the traffic lights are laid out again | the core puts `*` before the title | the core puts `*` before the title |
 | replacing a document's file | `-[NSFileManager replaceItemAtURL:withItemAtURL:…]` (permissions, dates, extended attributes, ACLs, identity) | rename after `chmod` and `lchown` to the target's | `ReplaceFileW`, retried on sharing violations; when it stops halfway, having removed the target, the replacement is renamed into place |

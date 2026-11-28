@@ -69,6 +69,12 @@ if app.colRow >= 0 { // -1 once another table's columns replaced the chosen one
 
 当同一个列表显示另一组行时，例如换成另一个表格的数据，应重新初始化状态（`app.list = ui.ListState{}`），清除原来的选择和滚动位置。
 
+选中的行以强调色显示，文字为 `AccentText`。`ChosenColor` 用你自己的颜色填充选中行，`ChosenText` 设置行内内容的颜色，例如编辑器旁的文件树用低调的灰色，避免强调色过于醒目；[大纲](outline.md)的箭头也使用 `ChosenText`。只设置 `ChosenColor` 时，行内保持主题的 `Text` 颜色。窗口未以活动状态绘制时强调色会变淡，`ChosenColor` 则保持不变。
+
+```go
+app.list.ChosenColor = ui.Hex("#3a3a3c")
+```
+
 按路径选择多个文件：
 
 ```go
@@ -126,7 +132,7 @@ ui.List(c, &app.list, len(app.files), func(i int) {
 })
 ```
 
-`RowClicked` 以同样方式报告单击，适用于单击即执行操作的行，例如文件列表打开文件，或侧边栏打开页面，无需在行内放置按钮拦截点击：点击由行接收，因此按首字母定位、屏幕阅读器和 `Tester.Click` 都使用行的 `Label`。每次不带修饰键的鼠标主键单击都会报告，包括单击已选中的行，此时 `Changed` 不会报告变化。用方向键移动选择，或用 Shift、Cmd 单击扩展选择则不会报告。双击时，第一次点击由 `RowClicked` 报告，第二次由 `RowDoubleClicked` 报告，与系统列表一致。辅助技术激活行时，行内第一个查询 `RowClicked` 的元素会收到报告；在不启用行选择的列表中，查询该方法也会让行接收点击。
+`RowClicked` 以同样方式报告单击，适用于单击即执行操作的行，例如文件列表打开文件，或侧边栏打开页面，无需在行内放置按钮拦截点击：点击由行接收，因此按首字母定位、屏幕阅读器和 `Tester.Click` 都使用行的 `Label`。每次不带修饰键的鼠标主键单击都会报告，包括单击已选中的行，此时 `Changed` 不会报告变化。用方向键移动选择，或用 Shift、Cmd 单击扩展选择则不会报告。双击时，第一次点击由 `RowClicked` 报告，第二次由 `RowDoubleClicked` 报告，与系统列表一致。辅助技术激活行时，行内第一个查询 `RowClicked` 的元素会收到报告；在不启用行选择的列表中，查询该方法也会让行接收点击。在列表或表格的行之外，没有行接收点击，这两个方法什么也不会报告：`Tester` 会在调用处 panic，应用则记录一次日志。在那里请用元素自己的 `Clicked` 和 `DoubleClicked`。
 
 ```go
 ui.List(c, &app.sidebar, len(app.pages), func(i int) {
